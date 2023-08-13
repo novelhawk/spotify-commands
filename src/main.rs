@@ -7,11 +7,11 @@ use windows::Win32::{
         Threading::{OpenProcess, PROCESS_QUERY_INFORMATION},
     },
     UI::{
-        Input::KeyboardAndMouse::{VK_NUMLOCK, VIRTUAL_KEY, VK_PAUSE},
+        Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_NUMLOCK, VK_PAUSE},
         WindowsAndMessaging::{
             CallNextHookEx, DispatchMessageA, EnumWindows, GetMessageA, GetWindowThreadProcessId,
-                SetWindowsHookExA, TranslateMessage, HHOOK, KBDLLHOOKSTRUCT, MSG,
-            MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APPCOMMAND, WM_KEYDOWN, WM_XBUTTONDOWN, SendMessageA,
+            SendMessageA, SetWindowsHookExA, TranslateMessage, HHOOK, KBDLLHOOKSTRUCT, MSG,
+            MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APPCOMMAND, WM_KEYDOWN, WM_XBUTTONDOWN,
         },
     },
 };
@@ -29,51 +29,43 @@ pub enum SpotifyCommand {
 }
 
 extern "system" fn mouse_hook(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    unsafe {
-        if wparam.0 == WM_XBUTTONDOWN as usize {
-            let event = &*(lparam.0 as *mut MSLLHOOKSTRUCT);
-            let button = (event.mouseData >> 16) as i16;
+    if wparam.0 == WM_XBUTTONDOWN as usize {
+        let event = unsafe { &*(lparam.0 as *mut MSLLHOOKSTRUCT) };
+        let button = (event.mouseData >> 16) as i16;
 
-            if button == 1 {
-                send_message(SpotifyCommand::PlayPause);
-            }
+        if button == 1 {
+            send_message(SpotifyCommand::PlayPause);
         }
-
-        CallNextHookEx(HHOOK::default(), ncode, wparam, lparam)
     }
+
+    unsafe { CallNextHookEx(HHOOK::default(), ncode, wparam, lparam) }
 }
 
 extern "system" fn keyboard_hook(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    unsafe {
-        if wparam.0 == WM_KEYDOWN as usize {
-            let event = &*(lparam.0 as *mut KBDLLHOOKSTRUCT);
+    if wparam.0 == WM_KEYDOWN as usize {
+        let event = unsafe { &*(lparam.0 as *mut KBDLLHOOKSTRUCT) };
 
-            match VIRTUAL_KEY(event.vkCode as u16) {
-                VK_NUMLOCK => send_message(SpotifyCommand::Next),
-                VK_PAUSE => send_message(SpotifyCommand::PlayPause),
-                _ => (),
-            }
+        match VIRTUAL_KEY(event.vkCode as u16) {
+            VK_NUMLOCK => send_message(SpotifyCommand::Next),
+            VK_PAUSE => send_message(SpotifyCommand::PlayPause),
+            _ => (),
         }
-
-        CallNextHookEx(HHOOK::default(), ncode, wparam, lparam)
     }
+
+    unsafe { CallNextHookEx(HHOOK::default(), ncode, wparam, lparam) }
 }
 
 fn send_message(command: SpotifyCommand) {
-    unsafe {
-        let hwnd = SPOTIFY_HWND.get().unwrap();
+    let hwnd = SPOTIFY_HWND.get().unwrap();
 
-        SendMessageA(
-            *hwnd,
-            WM_APPCOMMAND,
-            WPARAM::default(),
-            LPARAM(command as isize),
-        );
+    let param = LPARAM(command as isize);
+    unsafe {
+        SendMessageA(*hwnd, WM_APPCOMMAND, WPARAM::default(), param);
     }
 }
 
 unsafe fn application_loop() -> windows::core::Result<()> {
-    let mut lpmsg = MSG::default(); 
+    let mut lpmsg = MSG::default();
     while GetMessageA(&mut lpmsg, HWND::default(), 0, 0).as_bool() {
         TranslateMessage(&mut lpmsg);
         DispatchMessageA(&mut lpmsg);
@@ -83,20 +75,22 @@ unsafe fn application_loop() -> windows::core::Result<()> {
 }
 
 unsafe fn get_spotify() -> Option<HWND> {
-    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let mut buffer = [0u8; MAX_PATH as usize];
         let mut process_id = 0u32;
         let len: u32;
 
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut process_id));
 
-        let handle = match OpenProcess(PROCESS_QUERY_INFORMATION, false, process_id) {
-            Ok(handle) => handle,
-            Err(_) => return true.into(),
-        };
+            let handle = match OpenProcess(PROCESS_QUERY_INFORMATION, false, process_id) {
+                Ok(handle) => handle,
+                Err(_) => return true.into(),
+            };
 
-        len = GetProcessImageFileNameA(handle, &mut buffer);
-        CloseHandle(handle);
+            len = GetProcessImageFileNameA(handle, &mut buffer);
+            CloseHandle(handle);
+        }
 
         if len <= 0 {
             return true.into();
@@ -106,7 +100,7 @@ unsafe fn get_spotify() -> Option<HWND> {
 
         if str.ends_with("Spotify.exe") {
             let output = lparam.0 as *mut HWND;
-            *output = hwnd;
+            unsafe { *output = hwnd };
 
             println!("Found Spotify: {}", str);
             false.into()
